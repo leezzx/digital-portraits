@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>iPhone 17 Pro — Digital Portrait</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #08090b;
+    overflow: hidden;
+    touch-action: none;
+    font-family: -apple-system, "SF Pro Display", "Pretendard", "Helvetica Neue", Arial, sans-serif;
+  }
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  .hud {
+    position: absolute;
+    left: 0; right: 0;
+    pointer-events: none;
+    color: rgba(230, 226, 216, 0.86);
+    z-index: 2;
+  }
+  .hud-top { top: 5%; text-align: center; }
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: rgba(180, 200, 225, 0.6);
+    margin-bottom: 10px;
+  }
+  .title {
+    font-size: clamp(20px, 4vw, 30px);
+    font-weight: 300;
+    letter-spacing: 0.18em;
+    color: rgba(240, 238, 232, 0.92);
+  }
+  .title b { font-weight: 500; color: #f0ede4; }
+  .hud-bottom { bottom: 6%; text-align: center; }
+  .caption {
+    font-size: 13px;
+    font-weight: 300;
+    letter-spacing: 0.03em;
+    color: rgba(210, 210, 205, 0.5);
+  }
+  .series-tag {
+    position: absolute;
+    left: 20px;
+    bottom: 20px;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: rgba(255,255,255,0.26);
+    z-index: 2;
+    pointer-events: none;
+  }
+  .fade-in { animation: fadeIn 1.6s ease forwards; opacity: 0; }
+  @keyframes fadeIn { to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div class="hud hud-top fade-in" style="animation-delay:.3s">
+    <div class="eyebrow">digital portrait series</div>
+    <div class="title">iPhone 17 <b>Pro</b></div>
+  </div>
+  <div class="hud hud-bottom fade-in" style="animation-delay:.9s">
+    <div class="caption">터치하고 끌어보세요 — 형태가 흩어졌다 다시 모입니다</div>
+  </div>
+  <div class="series-tag fade-in" style="animation-delay:1.2s">NO. 01 — SILVER</div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, DPR;
+let cx, cy, phoneW, phoneH, cornerR;
+let particles = [];
+let t = 0;
+
+const pointer = { x: -9999, y: -9999, active: false, down: false, downSince: 0 };
+
+let isMobile = false;
+
+function resize() {
+  isMobile = window.innerWidth < 640 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
+  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  cx = isMobile ? W / 2 : W * 0.44;
+  cy = H / 2 + H * 0.01;
+  phoneH = Math.min(H * (isMobile ? 0.5 : 0.6), isMobile ? 480 : 600);
+  phoneW = phoneH * 0.475;
+  cornerR = phoneW * 0.13;
+
+  buildParticles();
+}
+
+function roundRectSegments(x0, y0, w, h, r) {
+  const l = x0, tp = y0, rr = x0 + w, bb = y0 + h;
+  return [
+    { type: 'line', x1: l + r, y1: tp, x2: rr - r, y2: tp },
+    { type: 'arc', cx: rr - r, cy: tp + r, r, a0: -Math.PI / 2, a1: 0 },
+    { type: 'line', x1: rr, y1: tp + r, x2: rr, y2: bb - r },
+    { type: 'arc', cx: rr - r, cy: bb - r, r, a0: 0, a1: Math.PI / 2 },
+    { type: 'line', x1: rr - r, y1: bb, x2: l + r, y2: bb },
+    { type: 'arc', cx: l + r, cy: bb - r, r, a0: Math.PI / 2, a1: Math.PI },
+    { type: 'line', x1: l, y1: bb - r, x2: l, y2: tp + r },
+    { type: 'arc', cx: l + r, cy: tp + r, r, a0: Math.PI, a1: Math.PI * 1.5 }
+  ];
+}
+
+function segLength(s) {
+  if (s.type === 'line') return Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+  return Math.abs(s.a1 - s.a0) * s.r;
+}
+function pointOnSeg(s, u) {
+  if (s.type === 'line') return { x: s.x1 + (s.x2 - s.x1) * u, y: s.y1 + (s.y2 - s.y1) * u };
+  const a = s.a0 + (s.a1 - s.a0) * u;
+  return { x: s.cx + Math.cos(a) * s.r, y: s.cy + Math.sin(a) * s.r };
+}
+function perimeterPoints(segments, n) {
+  const lengths = segments.map(segLength);
+  const total = lengths.reduce((a, b) => a + b, 0);
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    let d = (i / n) * total;
+    let si = 0;
+    while (si < segments.length - 1 && d > lengths[si]) { d -= lengths[si]; si++; }
+    const u = lengths[si] > 0 ? d / lengths[si] : 0;
+    pts.push(pointOnSeg(segments[si], u));
+  }
+  return pts;
+}
+function circlePoints(ccx, ccy, r, n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push({ x: ccx + Math.cos(a) * r, y: ccy + Math.sin(a) * r });
+  }
+  return pts;
+}
+function fillPoints(x0, y0, w, h, r, n) {
+  const pts = [];
+  let tries = 0;
+  while (pts.length < n && tries < n * 8) {
+    tries++;
+    const x = x0 + Math.random() * w;
+    const y = y0 + Math.random() * h;
+    const rx = Math.min(Math.abs(x - x0), Math.abs(x - (x0 + w)));
+    const ry = Math.min(Math.abs(y - y0), Math.abs(y - (y0 + h)));
+    if (rx < r && ry < r) {
+      const cornerDist = Math.hypot(r - rx, r - ry);
+      if (cornerDist > r) continue;
+    }
+    pts.push({ x, y });
+  }
+  return pts;
+}
+
+function addParticle(x, y, region, extra) {
+  particles.push(Object.assign({
+    baseX: x, baseY: y,
+    x: x + (Math.random() - 0.5) * 46,
+    y: y + (Math.random() - 0.5) * 46,
+    vx: 0, vy: 0,
+    phase: Math.random() * Math.PI * 2,
+    region
+  }, extra || {}));
+}
+
+function buildParticles() {
+  particles = [];
+  const bodyX = cx - phoneW / 2;
+  const bodyY = cy - phoneH / 2;
+
+  const bodySegs = roundRectSegments(bodyX, bodyY, phoneW, phoneH, cornerR);
+  perimeterPoints(bodySegs, 560).forEach(p => addParticle(p.x, p.y, 'body'));
+
+  const modW = phoneW * 0.94;
+  const modH = modW * 0.68;
+  const modX = cx - modW / 2;
+  const modY = bodyY + phoneH * 0.018;
+  const modSegs = roundRectSegments(modX, modY, modW, modH, modW * 0.13);
+  perimeterPoints(modSegs, 190).forEach(p => addParticle(p.x, p.y, 'module'));
+
+  const lensA = { x: modX + modW * 0.176, y: modY + modH * 0.317 };
+  const lensB = { x: modX + modW * 0.465, y: modY + modH * 0.522 };
+  const lensC = { x: modX + modW * 0.171, y: modY + modH * 0.717 };
+  const rA = modH * 0.196, rB = modH * 0.252, rC = modH * 0.196;
+
+  [[lensA, rA, 0], [lensB, rB, 1], [lensC, rC, 2]].forEach(([lc, r, idx]) => {
+    circlePoints(lc.x, lc.y, r, 46).forEach(p => addParticle(p.x, p.y, 'lens', { lensCenter: lc, lensIndex: idx }));
+    circlePoints(lc.x, lc.y, r * 0.5, 18).forEach(p => addParticle(p.x, p.y, 'lens', { lensCenter: lc, lensIndex: idx }));
+  });
+
+  const flash = { x: modX + modW * 0.80, y: modY + modH * 0.283 };
+  circlePoints(flash.x, flash.y, modH * 0.078, 22).forEach(p => addParticle(p.x, p.y, 'flash'));
+
+  const darkDot = { x: modX + modW * 0.75, y: modY + modH * 0.683 };
+  circlePoints(darkDot.x, darkDot.y, modH * 0.061, 18).forEach(p => addParticle(p.x, p.y, 'dot'));
+
+  const mic = { x: modX + modW * 0.847, y: modY + modH * 0.535 };
+  circlePoints(mic.x, mic.y, modH * 0.02, 8).forEach(p => addParticle(p.x, p.y, 'dot'));
+
+  const panelW = phoneW * 0.8;
+  const panelH = phoneH * 0.6;
+  const panelX = cx - panelW / 2;
+  const panelY = modY + modH + phoneH * 0.02;
+  const panelSegs = roundRectSegments(panelX, panelY, panelW, panelH, phoneW * 0.09);
+  perimeterPoints(panelSegs, 220).forEach(p => addParticle(p.x, p.y, 'panel'));
+  fillPoints(panelX, panelY, panelW, panelH, phoneW * 0.09, 70).forEach(p => addParticle(p.x, p.y, 'panelFill'));
+
+  if (!isMobile) buildSideProfile(bodyX, bodyY);
+}
+
+function buildSideProfile(mainBodyX, bodyY) {
+  const sx = mainBodyX + phoneW * 1.55;
+  const sw = phoneW * 0.16;
+  const sh = phoneH;
+  const sr = sw * 0.42;
+  const segs = roundRectSegments(sx, bodyY, sw, sh, sr);
+  perimeterPoints(segs, 240).forEach(p => addParticle(p.x, p.y, 'sideBody'));
+
+  const bumpW = sw * 0.62;
+  const bumpH = sh * 0.24;
+  const bumpX = sx - sw * 0.16;
+  const bumpY = bodyY + sh * 0.02;
+  const bumpSegs = roundRectSegments(bumpX, bumpY, bumpW, bumpH, bumpW * 0.3);
+  perimeterPoints(bumpSegs, 90).forEach(p => addParticle(p.x, p.y, 'sideBump'));
+
+  const btn1Segs = roundRectSegments(sx + sw * 0.86, bodyY + sh * 0.34, sw * 0.22, sh * 0.09, sw * 0.1);
+  perimeterPoints(btn1Segs, 26).forEach(p => addParticle(p.x, p.y, 'sideBtn'));
+  const btn2Segs = roundRectSegments(sx + sw * 0.86, bodyY + sh * 0.48, sw * 0.22, sh * 0.14, sw * 0.1);
+  perimeterPoints(btn2Segs, 30).forEach(p => addParticle(p.x, p.y, 'sideBtn'));
+}
+
+const palette = {
+  body: '#dcd8cf',
+  module: '#c7c2b6',
+  panel: '#eae6dc',
+  panelFill: '#e2ded4',
+  flash: '#f3ecdc',
+  dot: '#2c2c2a',
+  sideBody: '#d6d2c8',
+  sideBump: '#bdb8ac',
+  sideBtn: '#9a968a'
+};
+const lensHues = ['#8fb4e8', '#a99be0', '#7fc9d6'];
+
+function draw() {
+  t += 1;
+  ctx.clearRect(0, 0, W, H);
+
+  const grd = ctx.createRadialGradient(cx, cy, phoneH * 0.05, cx, cy, phoneH * 0.9);
+  grd.addColorStop(0, 'rgba(38,42,50,0.32)');
+  grd.addColorStop(1, 'rgba(8,9,11,0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, H);
+
+  const swirlActive = pointer.down ? Math.min(1, (t - pointer.downSince) / 26) : 0;
+  const sheen = (Math.sin(t * 0.006) + 1) / 2;
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const idleX = Math.sin(t * 0.016 + p.phase) * 1.5;
+    const idleY = Math.cos(t * 0.021 + p.phase) * 1.5;
+
+    let tx = p.baseX + idleX;
+    let ty = p.baseY + idleY;
+
+    if (p.region === 'lens' && pointer.down) {
+      const lc = p.lensCenter;
+      const relX = p.baseX - lc.x;
+      const relY = p.baseY - lc.y;
+      const ang = Math.atan2(relY, relX) + swirlActive * 1.1 * (p.lensIndex % 2 === 0 ? 1 : -1);
+      const rad = Math.hypot(relX, relY) * (1 - swirlActive * 0.35);
+      tx = lc.x + Math.cos(ang) * rad;
+      ty = lc.y + Math.sin(ang) * rad;
+    }
+
+    let ax = (tx - p.x) * 0.02;
+    let ay = (ty - p.y) * 0.02;
+
+    if (pointer.active) {
+      const dx = p.x - pointer.x;
+      const dy = p.y - pointer.y;
+      const dist = Math.hypot(dx, dy) || 0.001;
+      const radius = pointer.down ? 165 : 95;
+      const strength = pointer.down ? 3.4 : 1.1;
+      if (dist < radius) {
+        const f = (1 - dist / radius) * strength;
+        ax += (dx / dist) * f;
+        ay += (dy / dist) * f;
+      }
+    }
+
+    p.vx = (p.vx + ax) * 0.90;
+    p.vy = (p.vy + ay) * 0.90;
+    p.x += p.vx;
+    p.y += p.vy;
+
+    let color = palette[p.region] || '#cccccc';
+    let size = 1.3;
+    let glow = 0;
+    let alpha = 0.85;
+
+    if (p.region === 'lens') {
+      color = lensHues[p.lensIndex % lensHues.length];
+      size = 1.7;
+      glow = isMobile ? 3 : 7;
+    } else if (p.region === 'panelFill') {
+      size = 1.1;
+      alpha = 0.35 + sheen * 0.15;
+    } else if (p.region === 'panel') {
+      size = 1.2;
+      alpha = 0.55;
+    } else if (p.region === 'flash') {
+      size = 1.4;
+      glow = isMobile ? 2 : 4;
+    } else if (p.region === 'dot') {
+      size = 1.3;
+    } else if (p.region.startsWith('side')) {
+      size = 1.05;
+      alpha = 0.6;
+    }
+
+    ctx.beginPath();
+    if (glow > 0) { ctx.shadowColor = color; ctx.shadowBlur = glow; }
+    else { ctx.shadowBlur = 0; }
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+
+  requestAnimationFrame(draw);
+}
+
+function setPointer(x, y) {
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = x - rect.left;
+  pointer.y = y - rect.top;
+}
+
+window.addEventListener('resize', resize);
+canvas.addEventListener('mousemove', e => { pointer.active = true; setPointer(e.clientX, e.clientY); });
+canvas.addEventListener('mouseleave', () => { pointer.active = false; pointer.down = false; });
+canvas.addEventListener('mousedown', e => { pointer.down = true; pointer.downSince = t; setPointer(e.clientX, e.clientY); });
+window.addEventListener('mouseup', () => { pointer.down = false; });
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  pointer.active = true; pointer.down = true; pointer.downSince = t;
+  const touch = e.touches[0];
+  setPointer(touch.clientX, touch.clientY);
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  setPointer(touch.clientX, touch.clientY);
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  pointer.down = false; pointer.active = false;
+  pointer.x = -9999; pointer.y = -9999;
+}, { passive: false });
+
+resize();
+draw();
+</script>
+</body>
+</html>

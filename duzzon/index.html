@@ -276,6 +276,21 @@ function draw() {
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
+  // pick only the single frontmost truffle under the touch point, so
+  // overlapping neighbors don't get erased together
+  let activeTruffle = null;
+  if (pointer.active && pointer.down) {
+    for (let i = truffles.length - 1; i >= 0; i--) {
+      const tr = truffles[i];
+      const bounce = Math.sin(t * 0.02 + tr.phase) * 0.012;
+      const rPix = tr.r * scale * (1 + bounce);
+      const drawX = originX + tr.dx * scale;
+      const drawY = originY + tr.dy * scale;
+      const dist = Math.hypot(pointer.x - drawX, pointer.y - drawY);
+      if (dist < rPix) { activeTruffle = tr; break; }
+    }
+  }
+
   for (const tr of truffles) {
     const bounce = Math.sin(t * 0.02 + tr.phase) * 0.012;
     const rPix = tr.r * scale * (1 + bounce);
@@ -289,15 +304,12 @@ function draw() {
     ctx.fill();
     ctx.filter = 'none';
 
-    if (pointer.active && pointer.down) {
+    if (tr === activeTruffle) {
       const dx = pointer.x - drawX, dy = pointer.y - drawY;
-      const dist = Math.hypot(dx, dy);
-      if (dist < rPix * 1.05) {
-        const lx = OFF_R + (dx / rPix) * OFF_R;
-        const ly = OFF_R + (dy / rPix) * OFF_R;
-        eraseAt(tr, lx, ly);
-        spawnDust(pointer.x, pointer.y);
-      }
+      const lx = OFF_R + (dx / rPix) * OFF_R;
+      const ly = OFF_R + (dy / rPix) * OFF_R;
+      eraseAt(tr, lx, ly);
+      spawnDust(pointer.x, pointer.y);
     }
     healAll(tr);
 

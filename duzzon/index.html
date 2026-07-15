@@ -50,6 +50,11 @@ const MG = 44; // mask grid resolution per truffle
 const pointer = { x: -9999, y: -9999, down: false, active: false };
 
 function rand(a, b) { return a + Math.random() * (b - a); }
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return c;
+}
 
 function resize() {
   isMobile = window.innerWidth < 640 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
@@ -128,7 +133,9 @@ function layout() {
         erased,
         lastTouch: 0,
         squishAmt: 0,
-        squishV: 0
+        squishV: 0,
+        maskCanvas: makeCanvas(MG, MG),
+        scratchTex: makeCanvas(OFF, OFF)
       };
     });
     truffles.sort((a, b) => a.dy - b.dy);
@@ -222,13 +229,6 @@ function blobPath(pctx, cx, cy, rPix, shape, squishAmt) {
   pctx.closePath();
 }
 
-const scratchMask = document.createElement('canvas');
-scratchMask.width = MG; scratchMask.height = MG;
-const scratchMaskCtx = scratchMask.getContext('2d');
-const scratchTex = document.createElement('canvas');
-scratchTex.width = OFF; scratchTex.height = OFF;
-const scratchTexCtx = scratchTex.getContext('2d');
-
 function eraseAt(truffle, lx, ly) {
   const gx = (lx / OFF) * MG, gy = (ly / OFF) * MG;
   const gr = (30 / OFF) * MG;
@@ -269,7 +269,8 @@ function healAll(truffle) {
 }
 
 function renderMaskedCocoa(truffle) {
-  const imgData = scratchMaskCtx.createImageData(MG, MG);
+  const maskCtx = truffle.maskCanvas.getContext('2d');
+  const imgData = maskCtx.createImageData(MG, MG);
   const arr = truffle.erased;
   for (let i = 0; i < arr.length; i++) {
     const alpha = (1 - arr[i]) * 255;
@@ -278,16 +279,17 @@ function renderMaskedCocoa(truffle) {
     imgData.data[i * 4 + 2] = 255;
     imgData.data[i * 4 + 3] = alpha;
   }
-  scratchMaskCtx.putImageData(imgData, 0, 0);
+  maskCtx.putImageData(imgData, 0, 0);
 
-  scratchTexCtx.clearRect(0, 0, OFF, OFF);
-  scratchTexCtx.globalCompositeOperation = 'source-over';
-  scratchTexCtx.drawImage(truffle.cocoa, 0, 0);
-  scratchTexCtx.globalCompositeOperation = 'destination-in';
-  scratchTexCtx.imageSmoothingEnabled = true;
-  scratchTexCtx.drawImage(scratchMask, 0, 0, MG, MG, 0, 0, OFF, OFF);
-  scratchTexCtx.globalCompositeOperation = 'source-over';
-  return scratchTex;
+  const texCtx = truffle.scratchTex.getContext('2d');
+  texCtx.clearRect(0, 0, OFF, OFF);
+  texCtx.globalCompositeOperation = 'source-over';
+  texCtx.drawImage(truffle.cocoa, 0, 0);
+  texCtx.globalCompositeOperation = 'destination-in';
+  texCtx.imageSmoothingEnabled = true;
+  texCtx.drawImage(truffle.maskCanvas, 0, 0, MG, MG, 0, 0, OFF, OFF);
+  texCtx.globalCompositeOperation = 'source-over';
+  return truffle.scratchTex;
 }
 
 function spawnDust(x, y) {
@@ -398,16 +400,28 @@ function setPointer(x, y) {
   pointer.y = y - rect.top;
 }
 
+let lastTouchActivity = -9999;
+
 window.addEventListener('resize', resize);
-canvas.addEventListener('mousemove', e => { pointer.active = true; setPointer(e.clientX, e.clientY); });
+canvas.addEventListener('mousemove', e => {
+  if (t - lastTouchActivity < 90) return; // ignore synthetic mouse events after touch
+  pointer.active = true; setPointer(e.clientX, e.clientY);
+});
 canvas.addEventListener('mouseleave', () => { pointer.active = false; pointer.down = false; });
-canvas.addEventListener('mousedown', e => { pointer.down = true; pointer.active = true; setPointer(e.clientX, e.clientY); });
-window.addEventListener('mouseup', () => { pointer.down = false; });
+canvas.addEventListener('mousedown', e => {
+  if (t - lastTouchActivity < 90) return;
+  pointer.down = true; pointer.active = true; setPointer(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => {
+  if (t - lastTouchActivity < 90) return;
+  pointer.down = false;
+});
 
 let activeTouchId = null;
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  lastTouchActivity = t;
   if (activeTouchId !== null) return; // already tracking a touch, ignore extra fingers/palm
   const touch = e.changedTouches[0];
   activeTouchId = touch.identifier;
@@ -417,6 +431,7 @@ canvas.addEventListener('touchstart', e => {
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
+  lastTouchActivity = t;
   if (activeTouchId === null) return;
   for (let i = 0; i < e.changedTouches.length; i++) {
     const touch = e.changedTouches[i];
@@ -429,6 +444,7 @@ canvas.addEventListener('touchmove', e => {
 
 function endActiveTouch(e) {
   e.preventDefault();
+  lastTouchActivity = t;
   if (activeTouchId === null) return;
   for (let i = 0; i < e.changedTouches.length; i++) {
     if (e.changedTouches[i].identifier === activeTouchId) {

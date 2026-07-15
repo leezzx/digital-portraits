@@ -323,7 +323,7 @@ function draw() {
       const angle = Math.atan2(dyp, dxp);
       const shapeR = rPix * blobRadiusAt(tr.shape, angle) * tr.shape.squash;
       const ratio = dist / shapeR;
-      if (ratio < 0.9 && ratio < bestRatio) { bestRatio = ratio; activeTruffle = tr; }
+      if (ratio < 0.85 && ratio < bestRatio) { bestRatio = ratio; activeTruffle = tr; }
     }
   }
 
@@ -404,22 +404,43 @@ canvas.addEventListener('mouseleave', () => { pointer.active = false; pointer.do
 canvas.addEventListener('mousedown', e => { pointer.down = true; pointer.active = true; setPointer(e.clientX, e.clientY); });
 window.addEventListener('mouseup', () => { pointer.down = false; });
 
+let activeTouchId = null;
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  if (activeTouchId !== null) return; // already tracking a touch, ignore extra fingers/palm
+  const touch = e.changedTouches[0];
+  activeTouchId = touch.identifier;
   pointer.active = true; pointer.down = true;
-  const touch = e.touches[0];
   setPointer(touch.clientX, touch.clientY);
 }, { passive: false });
+
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  const touch = e.touches[0];
-  setPointer(touch.clientX, touch.clientY);
+  if (activeTouchId === null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const touch = e.changedTouches[i];
+    if (touch.identifier === activeTouchId) {
+      setPointer(touch.clientX, touch.clientY);
+      break;
+    }
+  }
 }, { passive: false });
-canvas.addEventListener('touchend', e => {
+
+function endActiveTouch(e) {
   e.preventDefault();
-  pointer.down = false; pointer.active = false;
-  pointer.x = -9999; pointer.y = -9999;
-}, { passive: false });
+  if (activeTouchId === null) return;
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    if (e.changedTouches[i].identifier === activeTouchId) {
+      activeTouchId = null;
+      pointer.down = false; pointer.active = false;
+      pointer.x = -9999; pointer.y = -9999;
+      break;
+    }
+  }
+}
+canvas.addEventListener('touchend', endActiveTouch, { passive: false });
+canvas.addEventListener('touchcancel', endActiveTouch, { passive: false });
 
 resize();
 draw();

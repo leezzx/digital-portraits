@@ -86,6 +86,19 @@ function buildBlobShape() {
   return { mult, squash: rand(0.86, 0.93) };
 }
 
+// approximate the blob's radius in a given direction by interpolating
+// between its control points (same angular basis as blobPath)
+function blobRadiusAt(shape, angleFromCenter) {
+  const n = shape.mult.length;
+  let a = angleFromCenter + Math.PI / 2;
+  a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const f = (a / (Math.PI * 2)) * n;
+  const i0 = Math.floor(f) % n;
+  const i1 = (i0 + 1) % n;
+  const frac = f - Math.floor(f);
+  return shape.mult[i0] * (1 - frac) + shape.mult[i1] * frac;
+}
+
 function layout() {
   const s = Math.min(W / (design.w * 1.5), H / (design.h * 1.6));
   scale = s * (isMobile ? 1.15 : 1);
@@ -188,8 +201,8 @@ function buildTexture() {
 
 function blobPath(pctx, cx, cy, rPix, shape, squishAmt) {
   squishAmt = squishAmt || 0;
-  const xScale = 1 + squishAmt * 0.16;
-  const squashEff = Math.max(0.55, shape.squash - squishAmt * 0.24);
+  const xScale = 1 + squishAmt * 0.08;
+  const squashEff = Math.max(0.6, shape.squash - squishAmt * 0.12);
   const n = shape.mult.length;
   const pts = [];
   for (let i = 0; i < n; i++) {
@@ -220,8 +233,8 @@ function eraseAt(truffle, lx, ly) {
   const gx = (lx / OFF) * MG, gy = (ly / OFF) * MG;
   const gr = (30 / OFF) * MG;
   const gr2 = gr * gr;
-  const rimStart = 0.72; // normalized radius where the resistant skin begins
-  const rimMinOpacity = 0.16; // cocoa never goes below this near the very edge
+  const rimStart = 0.52; // normalized radius where the resistant skin begins (applies equally in every direction)
+  const rimMinOpacity = 0.05; // cocoa can barely be erased near the very edge
   const x0 = Math.max(0, Math.floor(gx - gr)), x1 = Math.min(MG - 1, Math.ceil(gx + gr));
   const y0 = Math.max(0, Math.floor(gy - gr)), y1 = Math.min(MG - 1, Math.ceil(gy + gr));
   for (let y = y0; y <= y1; y++) {
@@ -305,9 +318,12 @@ function draw() {
       const rPix = tr.r * scale * (1 + bounce);
       const drawX = originX + tr.dx * scale;
       const drawY = originY + tr.dy * scale;
-      const dist = Math.hypot(pointer.x - drawX, pointer.y - drawY);
-      const ratio = dist / rPix;
-      if (ratio < 0.94 && ratio < bestRatio) { bestRatio = ratio; activeTruffle = tr; }
+      const dxp = pointer.x - drawX, dyp = pointer.y - drawY;
+      const dist = Math.hypot(dxp, dyp);
+      const angle = Math.atan2(dyp, dxp);
+      const shapeR = rPix * blobRadiusAt(tr.shape, angle) * tr.shape.squash;
+      const ratio = dist / shapeR;
+      if (ratio < 0.9 && ratio < bestRatio) { bestRatio = ratio; activeTruffle = tr; }
     }
   }
 
@@ -330,7 +346,7 @@ function draw() {
     tr.squishAmt += tr.squishV;
 
     if (tr === activeTruffle) {
-      tr.squishV += 0.045;
+      tr.squishV += 0.02;
       const dx = pointer.x - drawX, dy = pointer.y - drawY;
       const lx = OFF_R + (dx / rPix) * OFF_R;
       const ly = OFF_R + (dy / rPix) * OFF_R;

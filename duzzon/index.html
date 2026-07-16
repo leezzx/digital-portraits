@@ -69,7 +69,7 @@ const design = { w: 480, h: 420 };
 const layoutDef = [
   { x: 110, y: 85, r: 82 }, { x: 230, y: 78, r: 90 }, { x: 350, y: 88, r: 78 },
   { x: 55, y: 195, r: 98 }, { x: 175, y: 188, r: 108 }, { x: 295, y: 190, r: 102 }, { x: 400, y: 200, r: 86 },
-  { x: 100, y: 305, r: 116 }, { x: 220, y: 300, r: 124 }, { x: 340, y: 306, r: 108 }
+  { x: 100, y: 305, r: 116 }, { x: 220, y: 314, r: 124 }, { x: 340, y: 306, r: 108 }
 ];
 
 function buildBlobShape() {
@@ -190,8 +190,8 @@ function buildTexture() {
 
 function blobPath(pctx, cx, cy, rPix, shape, squishAmt) {
   squishAmt = squishAmt || 0;
-  const xScale = 1 + squishAmt * 0.08;
-  const squashEff = Math.max(0.6, shape.squash - squishAmt * 0.12);
+  const xScale = 1 + squishAmt * 0.12;
+  const squashEff = Math.max(0.6, shape.squash - squishAmt * 0.18);
   const n = shape.mult.length;
   const pts = [];
   for (let i = 0; i < n; i++) {
@@ -330,7 +330,7 @@ function draw() {
     tr.squishAmt += tr.squishV;
 
     if (tr === activeTruffle) {
-      tr.squishV += 0.02;
+      tr.squishV += 0.034;
       const dx = pointer.x - drawX, dy = pointer.y - drawY;
       const lx = OFF_R + (dx / rPix) * OFF_R;
       const ly = OFF_R + (dy / rPix) * OFF_R;
@@ -342,14 +342,6 @@ function draw() {
     let revealed = 0;
     for (let i = 0; i < tr.erased.length; i++) revealed += tr.erased[i];
     revealed /= tr.erased.length;
-    if (revealed > 0.12) {
-      const glowA = Math.min(0.32, revealed * 0.4);
-      ctx.beginPath();
-      ctx.arc(drawX, drawY, rPix * 1.08, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(190,210,120,${glowA})`;
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    }
 
     const maskedCocoa = renderMaskedCocoa(tr);
 

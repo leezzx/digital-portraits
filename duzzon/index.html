@@ -65,18 +65,11 @@ function resize() {
   layout();
 }
 
-const design = { w: 340, h: 300 };
+const design = { w: 480, h: 420 };
 const layoutDef = [
-  { x: 48, y: 58, r: 38 },
-  { x: 138, y: 44, r: 42 },
-  { x: 228, y: 56, r: 39 },
-  { x: 306, y: 80, r: 35 },
-  { x: 82, y: 128, r: 47 },
-  { x: 176, y: 112, r: 51 },
-  { x: 264, y: 132, r: 46 },
-  { x: 98, y: 216, r: 58 },
-  { x: 200, y: 226, r: 61, cut: true },
-  { x: 296, y: 202, r: 53, cut: true }
+  { x: 110, y: 85, r: 82 }, { x: 230, y: 78, r: 90 }, { x: 350, y: 88, r: 78 },
+  { x: 55, y: 195, r: 98 }, { x: 175, y: 188, r: 108 }, { x: 295, y: 190, r: 102 }, { x: 400, y: 200, r: 86 },
+  { x: 100, y: 305, r: 116 }, { x: 220, y: 300, r: 124 }, { x: 340, y: 306, r: 108 }
 ];
 
 function buildBlobShape() {
@@ -105,7 +98,7 @@ function blobRadiusAt(shape, angleFromCenter) {
 }
 
 function layout() {
-  const s = Math.min(W / (design.w * 1.5), H / (design.h * 1.6));
+  const s = Math.min(W / (design.w * 1.12), H / (design.h * 1.18));
   scale = s * (isMobile ? 1.15 : 1);
   originX = W / 2 - (design.w * scale) / 2;
   originY = H / 2 - (design.h * scale) / 2 + H * 0.02;
@@ -114,17 +107,6 @@ function layout() {
     truffles = layoutDef.map((d) => {
       const tex = buildTexture();
       const erased = new Float32Array(MG * MG);
-      if (d.cut) {
-        for (let gy = 0; gy < MG; gy++) {
-          for (let gx = 0; gx < MG; gx++) {
-            const ux = (gx / MG) * 2 - 1, uy = (gy / MG) * 2 - 1;
-            const ang = Math.atan2(uy, ux);
-            if (ang > -1.15 && ang < -0.1 && Math.hypot(ux, uy) < 1.05) {
-              erased[gy * MG + gx] = 1;
-            }
-          }
-        }
-      }
       return {
         dx: d.x, dy: d.y, r: d.r,
         pistachio: tex.pistachio, cocoa: tex.cocoa,
@@ -231,7 +213,7 @@ function blobPath(pctx, cx, cy, rPix, shape, squishAmt) {
 
 function eraseAt(truffle, lx, ly) {
   const gx = (lx / OFF) * MG, gy = (ly / OFF) * MG;
-  const gr = (30 / OFF) * MG;
+  const gr = (42 / OFF) * MG;
   const gr2 = gr * gr;
   const rimStart = 0.52; // normalized radius where the resistant skin begins (applies equally in every direction)
   const rimMinOpacity = 0.05; // cocoa can barely be erased near the very edge

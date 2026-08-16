@@ -1,1 +1,359 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Grip Stand — Digital Portrait</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #07070a;
+    overflow: hidden;
+    touch-action: none;
+    font-family: -apple-system, "SF Pro Display", "Pretendard", "Helvetica Neue", Arial, sans-serif;
+  }
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  canvas { display: block; width: 100%; height: 100%; }
+  .hud {
+    position: absolute; left: 0; right: 0; bottom: 6%;
+    pointer-events: none; text-align: center; z-index: 2;
+  }
+  .caption {
+    font-size: 13px; font-weight: 300; letter-spacing: 0.03em;
+    color: rgba(220, 220, 230, 0.45);
+  }
+  .fade-in { animation: fadeIn 1.8s ease forwards; opacity: 0; }
+  @keyframes fadeIn { to { opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c"></canvas>
+  <div class="hud fade-in" style="animation-delay:.8s">
+    <div class="caption">당겨서 열어보세요</div>
+  </div>
+</div>
 
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, DPR, isMobile;
+let scale = 1, originX = 0, originY = 0;
+let t = 0;
+let discs = [];
+let sparks = [];
+
+function rand(a, b) { return a + Math.random() * (b - a); }
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+const pointer = { x: -9999, y: -9999, down: false, active: false };
+
+function resize() {
+  isMobile = window.innerWidth < 640 || /Mobi|Android|iPhone/i.test(navigator.userAgent);
+  DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  layout();
+}
+
+const design = { w: 380, h: 420 };
+const layoutDef = [
+  { cx: 130, cy: 130, r: 62, hue: 265, petals: 6, shape: 'star' },
+  { cx: 270, cy: 210, r: 70, hue: 165, petals: 5, shape: 'face' },
+  { cx: 110, cy: 320, r: 58, hue: 20,  petals: 7, shape: 'spiral' }
+];
+
+const N = 380;
+
+function buildDisc(d) {
+  const points = [];
+  for (let i = 0; i < N; i++) {
+    const r = Math.sqrt(i / N);
+    const theta = i * GOLDEN_ANGLE;
+    points.push({
+      r, theta,
+      x: 0, y: 0, vx: 0, vy: 0,
+      shimmer: Math.random() * Math.PI * 2
+    });
+  }
+  return {
+    cx: d.cx, cy: d.cy, R: d.r, hue: d.hue, petals: d.petals, shape: d.shape,
+    points,
+    phase: Math.random() * Math.PI * 2,
+    rotation: Math.random() * Math.PI * 2,
+    opennessCur: 0, opennessTarget: 0,
+    dragging: false
+  };
+}
+
+function layout() {
+  const s = Math.min(W / (design.w * 1.5), H / (design.h * 1.4));
+  scale = s * (isMobile ? 1.1 : 1);
+  originX = W / 2 - (design.w * scale) / 2;
+  originY = H / 2 - (design.h * scale) / 2 + H * 0.02;
+
+  if (discs.length === 0) {
+    discs = layoutDef.map(buildDisc);
+  }
+}
+
+function closedLocal(p, R) {
+  const rr = p.r * R * 0.92;
+  return { x: Math.cos(p.theta) * rr, y: Math.sin(p.theta) * rr };
+}
+function angWrap(a) {
+  a = a % (Math.PI * 2);
+  if (a > Math.PI) a -= Math.PI * 2;
+  if (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+function gauss(theta, center, spread) {
+  const d = angWrap(theta - center);
+  return Math.exp(-(d * d) / spread);
+}
+
+function boundaryFor(disc, p) {
+  if (disc.shape === 'face') {
+    // generic round-eared creature silhouette (not a specific trademarked character)
+    const earA = -Math.PI * 0.68, earB = -Math.PI * 0.32;
+    const ears = gauss(p.theta, earA, 0.035) + gauss(p.theta, earB, 0.035);
+    return 0.78 + ears * 0.62;
+  }
+  if (disc.shape === 'spiral') {
+    const arms = 3, twist = 3.4;
+    const angle = p.theta - p.r * twist;
+    return 0.22 + 0.9 * Math.pow(Math.max(0, Math.cos(arms * angle)), 1.6);
+  }
+  // star (default)
+  return 1 + 0.38 * Math.cos(disc.petals * p.theta);
+}
+
+function openLocal(p, R, disc) {
+  const bloomByShape = { star: 1.9, face: 1.55, spiral: 2.05 };
+  const bloom = bloomByShape[disc.shape] || 1.9;
+  const boundary = boundaryFor(disc, p);
+  const rr = (0.3 + 0.7 * p.r) * R * bloom * boundary;
+  return { x: Math.cos(p.theta) * rr, y: Math.sin(p.theta) * rr };
+}
+
+// ---------- synthesized pop ----------
+let audioCtx = null, noiseBuf = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    noiseBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.08, audioCtx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+function playPop(kind) {
+  try {
+    ensureAudio();
+    const now = audioCtx.currentTime;
+    const open = kind === 'open';
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = noiseBuf;
+    const bp = audioCtx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = open ? rand(2200, 3000) : rand(1200, 1700);
+    bp.Q.value = 1.1;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(0, now);
+    ng.gain.linearRampToValueAtTime(open ? 0.4 : 0.22, now + 0.002);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + (open ? 0.09 : 0.05));
+    src.connect(bp); bp.connect(ng); ng.connect(audioCtx.destination);
+    src.start(now); src.stop(now + 0.12);
+
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    const startF = open ? 900 : 500;
+    const endF = open ? 240 : 180;
+    osc.frequency.setValueAtTime(startF, now);
+    osc.frequency.exponentialRampToValueAtTime(endF, now + 0.055);
+    const og = audioCtx.createGain();
+    og.gain.setValueAtTime(0, now);
+    og.gain.linearRampToValueAtTime(open ? 0.3 : 0.15, now + 0.004);
+    og.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+    osc.connect(og); og.connect(audioCtx.destination);
+    osc.start(now); osc.stop(now + 0.07);
+  } catch (e) { /* ignore */ }
+}
+
+function spawnSparks(x, y, hue, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    sparks.push({
+      x, y, vx: Math.cos(a) * rand(0.6, 2.2), vy: Math.sin(a) * rand(0.6, 2.2),
+      life: 1, size: rand(1, 2.6), hue
+    });
+  }
+}
+
+function draw() {
+  t += 1;
+  ctx.clearRect(0, 0, W, H);
+
+  const bg = ctx.createRadialGradient(W / 2, H * 0.4, H * 0.05, W / 2, H * 0.55, H * 0.85);
+  bg.addColorStop(0, '#19181c');
+  bg.addColorStop(1, '#050506');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  for (const disc of discs) {
+    const bobY = Math.sin(t * 0.013 + disc.phase) * 8;
+    const bobX = Math.cos(t * 0.01 + disc.phase * 1.4) * 5;
+    disc._wx = originX + disc.cx * scale + bobX;
+    disc._wy = originY + disc.cy * scale + bobY;
+
+    disc.rotation += 0.0022 + disc.opennessCur * 0.006;
+
+    if (disc.dragging) {
+      const dx = (pointer.x - disc._wx) / scale;
+      const dy = (pointer.y - disc._wy) / scale;
+      const dist = Math.hypot(dx, dy);
+      disc.opennessTarget = Math.max(0, Math.min(1, (dist - disc.R * 0.55) / (disc.R * 1.5)));
+    }
+
+    disc.opennessCur += (disc.opennessTarget - disc.opennessCur) * 0.18;
+
+    const cosR = Math.cos(disc.rotation), sinR = Math.sin(disc.rotation);
+    const R = disc.R * scale;
+
+    for (const p of disc.points) {
+      const cl = closedLocal(p, R);
+      const op = openLocal(p, R, disc);
+      const lx = cl.x + (op.x - cl.x) * disc.opennessCur;
+      const ly = cl.y + (op.y - cl.y) * disc.opennessCur;
+
+      const jx = Math.sin(t * 0.03 + p.shimmer) * 0.6;
+      const jy = Math.cos(t * 0.027 + p.shimmer) * 0.6;
+
+      const rx = lx * cosR - ly * sinR + jx;
+      const ry = lx * sinR + ly * cosR + jy;
+
+      const targetX = disc._wx + rx, targetY = disc._wy + ry;
+      p.vx = (p.vx + (targetX - p.x) * 0.22) * 0.72;
+      p.vy = (p.vy + (targetY - p.y) * 0.22) * 0.72;
+      if (p.x === 0 && p.y === 0) { p.x = targetX; p.y = targetY; }
+      p.x += p.vx; p.y += p.vy;
+    }
+  }
+
+  for (const disc of discs) {
+    const R = disc.R * scale * (0.7 + disc.opennessCur * 0.5);
+    ctx.beginPath();
+    ctx.ellipse(disc._wx, disc._wy + R * 0.55, R * 0.8, R * 0.22, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.filter = 'blur(7px)';
+    ctx.fill();
+    ctx.filter = 'none';
+  }
+
+  for (const disc of discs) {
+    for (const p of disc.points) {
+      const shimmerHue = disc.hue + Math.sin(p.theta * 3 + t * 0.01) * 18 + disc.opennessCur * 20;
+      const light = 55 + Math.sin(p.theta * 2 - t * 0.008) * 12;
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${shimmerHue}, 70%, ${light}%, 0.88)`;
+      ctx.arc(p.x, p.y, Math.max(1, 1.6 * scale * (isMobile ? 0.9 : 1)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const coreR = disc.R * scale * 0.18 * (1 - disc.opennessCur * 0.5);
+    const glow = ctx.createRadialGradient(disc._wx, disc._wy, 0, disc._wx, disc._wy, coreR * 3);
+    glow.addColorStop(0, `hsla(${disc.hue}, 80%, 70%, 0.25)`);
+    glow.addColorStop(1, `hsla(${disc.hue}, 80%, 70%, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(disc._wx, disc._wy, coreR * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.vy += 0.02; s.x += s.vx; s.y += s.vy; s.life -= 0.017;
+    if (s.life <= 0) { sparks.splice(i, 1); continue; }
+    ctx.beginPath();
+    ctx.fillStyle = `hsla(${s.hue}, 85%, 78%, ${s.life})`;
+    ctx.shadowColor = `hsla(${s.hue}, 85%, 70%, 0.8)`;
+    ctx.shadowBlur = 5;
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  requestAnimationFrame(draw);
+}
+
+function setPointer(x, y) {
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = x - rect.left; pointer.y = y - rect.top;
+}
+
+function onDown(x, y) {
+  setPointer(x, y);
+  pointer.active = true; pointer.down = true;
+  for (let i = discs.length - 1; i >= 0; i--) {
+    const disc = discs[i];
+    const dist = Math.hypot(pointer.x - disc._wx, pointer.y - disc._wy);
+    if (dist < disc.R * scale * 2.2) {
+      disc.dragging = true;
+      disc._active = true;
+      break;
+    }
+  }
+}
+function onMove(x, y) { if (pointer.down) setPointer(x, y); }
+function onUp() {
+  pointer.down = false; pointer.active = false;
+  for (const disc of discs) {
+    if (!disc._active) continue;
+    disc._active = false;
+    disc.dragging = false;
+    const wasOpen = disc.opennessTarget > 0.5;
+    disc.opennessTarget = wasOpen ? 1 : 0;
+    playPop(wasOpen ? 'open' : 'close');
+    spawnSparks(disc._wx, disc._wy, disc.hue, wasOpen ? 10 : 5);
+  }
+  pointer.x = -9999; pointer.y = -9999;
+}
+
+let lastTouchActivity = -9999;
+canvas.addEventListener('mousemove', e => { if (t - lastTouchActivity < 90) return; onMove(e.clientX, e.clientY); });
+canvas.addEventListener('mousedown', e => { if (t - lastTouchActivity < 90) return; onDown(e.clientX, e.clientY); });
+window.addEventListener('mouseup', () => { if (t - lastTouchActivity < 90) return; onUp(); });
+
+let activeTouchId = null;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  lastTouchActivity = t;
+  if (activeTouchId !== null) return;
+  const touch = e.changedTouches[0];
+  activeTouchId = touch.identifier;
+  onDown(touch.clientX, touch.clientY);
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  lastTouchActivity = t;
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === activeTouchId) { onMove(touch.clientX, touch.clientY); break; }
+  }
+}, { passive: false });
+function endTouch(e) {
+  e.preventDefault();
+  lastTouchActivity = t;
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === activeTouchId) { activeTouchId = null; onUp(); break; }
+  }
+}
+canvas.addEventListener('touchend', endTouch, { passive: false });
+canvas.addEventListener('touchcancel', endTouch, { passive: false });
+
+window.addEventListener('resize', resize);
+resize();
+draw();
+</script>
+</body>
+</html>
